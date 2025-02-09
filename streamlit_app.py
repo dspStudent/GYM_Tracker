@@ -4,246 +4,137 @@ import datetime
 import hashlib
 import os
 
-# Initialize Excel files if they don't exist
-def init_excel_files():
-    files = {
-        'users.xlsx': ['username', 'password', 'workout_config'],
-        'workouts.xlsx': ['username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight'],
-        'weights.xlsx': ['username', 'Date', 'Weight']
+def get_today_workout():
+    schedule = {
+        "Monday": ["Pull-ups", "Bicep Curl", "Hammer Curl"],
+        "Tuesday": ["Incline Dumbbell Press", "Flat Dumbbell Press", "Weighted Dips", "Tricep Pushdown"],
+        "Wednesday": ["Lateral Raises", "Shoulder Press", "Barbell Shrugs", "Rear Delts", "Hanging Leg Raises"],
+        "Thursday": ["Pull-ups", "Bicep Curl", "Hammer Curl"],
+        "Friday": ["Incline Dumbbell Press", "Flat Dumbbell Press", "Weighted Dips", "Tricep Pushdown"],
+        "Saturday": ["Lateral Raises", "Shoulder Press", "Barbell Shrugs", "Rear Delts", "Hanging Leg Raises", "Squats", "Leg Curls", "Calf Raises"],
+        "Sunday": ["rest"]
     }
-    for file, columns in files.items():
-        if not os.path.exists(file):
-            pd.DataFrame(columns=columns).to_excel(file, index=False)
+    # test_day=st.text_input("enter day for test")
+    # if test_day is None:
+    #     test_day="Monday"
+    actual=datetime.datetime.today().strftime("%A")
+    return schedule[actual]
 
-# Default workout configuration
-DEFAULT_WORKOUT_CONFIG = {
-    'Monday': ['Bench Press', 'Incline Press', 'Chest Flyes', 'Tricep Extensions'],
-    'Tuesday': ['Deadlifts', 'Pull-ups', 'Barbell Rows', 'Bicep Curls'],
-    'Wednesday': ['Squats', 'Leg Press', 'Leg Extensions', 'Calf Raises'],
-    'Thursday': ['Shoulder Press', 'Lateral Raises', 'Front Raises', 'Shrugs'],
-    'Friday': ['Bench Press', 'Pull-ups', 'Shoulder Press', 'Arms Superset'],
-    'Saturday': ['Full Body Workout'],
-    'Sunday': ['Rest Day']
-}
+# File setup
+WORKOUT_FILE = "workout_data.csv"
+if not os.path.exists(WORKOUT_FILE):
+    df = pd.DataFrame(columns=["Date", "Exercise", "Set", "Reps", "Weight"])
+    df.to_csv(WORKOUT_FILE, index=False)
 
-# Authentication functions
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+WEIGHT_FILE = "weight_data.csv"
+if not os.path.exists(WEIGHT_FILE):
+    df = pd.DataFrame(columns=["Date", "Weight"])
+    df.to_csv(WEIGHT_FILE, index=False)
 
-def load_users():
-    if os.path.exists('users.xlsx'):
-        return pd.read_excel('users.xlsx')
-    return pd.DataFrame(columns=['username', 'password', 'workout_config'])
+def load_workout_data():
+    return pd.read_csv(WORKOUT_FILE)
 
-def save_user(username, password, workout_config):
-    users_df = load_users()
-    new_user = pd.DataFrame([[username, hash_password(password), str(workout_config)]], 
-                           columns=['username', 'password', 'workout_config'])
-    users_df = pd.concat([users_df, new_user], ignore_index=True)
-    users_df.to_excel('users.xlsx', index=False)
+def save_workout_data(df):
+    df.to_csv(WORKOUT_FILE, index=False)
 
-def authenticate(username, password):
-    users_df = load_users()
-    user = users_df[users_df['username'] == username]
-    if not user.empty:
-        if user.iloc[0]['password'] == hash_password(password):
-            return True
-    return False
+def load_weight_data():
+    return pd.read_csv(WEIGHT_FILE)
 
-# Data handling functions
-def load_workout_data(username):
-    if os.path.exists('workouts.xlsx'):
-        df = pd.read_excel('workouts.xlsx')
-        return df[df['username'] == username]
-    return pd.DataFrame(columns=['username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight'])
-
-def save_workout_data(df, username):
-    all_df = pd.read_excel('workouts.xlsx')
-    all_df = all_df[all_df['username'] != username]
-    df['username'] = username
-    final_df = pd.concat([all_df, df], ignore_index=True)
-    final_df.to_excel('workouts.xlsx', index=False)
-
-def load_weight_data(username):
-    if os.path.exists('weights.xlsx'):
-        df = pd.read_excel('weights.xlsx')
-        return df[df['username'] == username]
-    return pd.DataFrame(columns=['username', 'Date', 'Weight'])
-
-def save_weight_data(df, username):
-    all_df = pd.read_excel('weights.xlsx')
-    all_df = all_df[all_df['username'] != username]
-    df['username'] = username
-    final_df = pd.concat([all_df, df], ignore_index=True)
-    final_df.to_excel('weights.xlsx', index=False)
-
-def get_user_workout_config(username):
-    users_df = load_users()
-    user = users_df[users_df['username'] == username]
-    if not user.empty:
-        return eval(user.iloc[0]['workout_config'])
-    return DEFAULT_WORKOUT_CONFIG
-
-def update_workout_config(username, new_config):
-    users_df = load_users()
-    users_df.loc[users_df['username'] == username, 'workout_config'] = str(new_config)
-    users_df.to_excel('users.xlsx', index=False)
-
-# Page functions
-def login_page():
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.title("🏋️ Gym Tracker Login")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Login", use_container_width=True):
-                if authenticate(username, password):
-                    st.session_state['logged_in'] = True
-                    st.session_state['username'] = username
-                    st.success("Login successful!")
-                    st.rerun()
-                else:
-                    st.error("Invalid credentials")
-        with col2:
-            if st.button("Sign Up", use_container_width=True):
-                st.session_state['show_signup'] = True
-                st.rerun()
-
-def signup_page():
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.title("Create Account")
-        new_username = st.text_input("Choose Username")
-        new_password = st.text_input("Choose Password", type="password")
-        confirm_password = st.text_input("Confirm Password", type="password")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Back to Login", use_container_width=True):
-                st.session_state['show_signup'] = False
-                st.rerun()
-        with col2:
-            if st.button("Create Account", use_container_width=True):
-                if new_password != confirm_password:
-                    st.error("Passwords don't match!")
-                elif not new_username or not new_password:
-                    st.error("Please fill all fields!")
-                else:
-                    users_df = load_users()
-                    if new_username in users_df['username'].values:
-                        st.error("Username already exists!")
-                    else:
-                        save_user(new_username, new_password, DEFAULT_WORKOUT_CONFIG)
-                        st.success("Account created successfully!")
-                        st.session_state['show_signup'] = False
-                        st.rerun()
-
-def main_app():
-    username = st.session_state['username']
-    workout_config = get_user_workout_config(username)
-    
-    # Sidebar
-    with st.sidebar:
-        st.title(f"Welcome, {username}!")
-        page = st.radio("Navigation", ["Workout Tracker", "Profile", "Logout"])
-        
-        if page == "Logout":
-            st.session_state['logged_in'] = False
-            st.rerun()
-    
-    if page == "Profile":
-        st.title("Profile Settings")
-        st.subheader("Customize Your Workout Schedule")
-        
-        new_config = {}
-        for day in workout_config.keys():
-            st.write(f"\n{day}")
-            exercises = st.text_area(
-                f"Exercises for {day}", 
-                value='\n'.join(workout_config[day]),
-                key=f"exercises_{day}"
-            )
-            new_config[day] = [ex.strip() for ex in exercises.split('\n') if ex.strip()]
-        
-        if st.button("Save Changes", use_container_width=True):
-            update_workout_config(username, new_config)
-            st.success("Workout schedule updated!")
-    
-    else:  # Workout Tracker
-        st.title("🏋️ Gym Reps & Weight Tracker")
-        date_str = str(datetime.date.today())
-        today = datetime.datetime.today().strftime('%A')
-        
-        tab1, tab2 = st.tabs(["Workout Tracker", "Weight Tracker"])
-        
-        with tab1:
-            st.subheader(f"Today's Workout Plan ({today})")
-            
-            # Input form
-            col1, col2 = st.columns(2)
-            with col1:
-                exercise = st.selectbox("Exercise:", workout_config[today])
-                reps = st.number_input("Reps:", min_value=1, step=1)
-            with col2:
-                set_number = st.number_input("Set:", min_value=1, step=1)
-                weight = st.number_input("Weight (kg):", min_value=0.0, step=0.5)
-            
-            # Add entry button
-            if st.button("Add Entry", use_container_width=True):
-                df = load_workout_data(username)
-                new_entry = pd.DataFrame([[username, date_str, exercise, set_number, reps, weight]], 
-                                      columns=['username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight'])
-                df = pd.concat([df, new_entry], ignore_index=True)
-                save_workout_data(df, username)
-                st.success(f"Added: {exercise} - Set {set_number}, {reps} reps @ {weight}kg")
-                st.rerun()
-            
-            # Show today's workout
-            df = load_workout_data(username)
-            today_workout = df[df['Date'] == date_str]
-            if not today_workout.empty:
-                st.subheader("Today's Progress")
-                st.dataframe(today_workout[['Exercise', 'Set', 'Reps', 'Weight']])
-        
-        with tab2:
-            st.subheader("Weight Tracker")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                weight = st.number_input("Your Weight (kg):", min_value=0.0, step=0.1)
-            with col2:
-                if st.button("Save Weight", use_container_width=True):
-                    df_weight = load_weight_data(username)
-                    new_entry = pd.DataFrame([[username, date_str, weight]], 
-                                          columns=['username', 'Date', 'Weight'])
-                    df_weight = pd.concat([df_weight, new_entry], ignore_index=True)
-                    save_weight_data(df_weight, username)
-                    st.success(f"Weight recorded: {weight}kg")
-                    st.rerun()
-            
-            # Show weight history
-            df_weight = load_weight_data(username)
-            if not df_weight.empty:
-                st.line_chart(df_weight.set_index('Date')['Weight'])
+def save_weight_data(df):
+    df.to_csv(WEIGHT_FILE, index=False)
 
 def main():
-    init_excel_files()
+    st.set_page_config(page_title="Gym Reps Tracker", layout="wide")
+    st.markdown(
+        """
+        <style>
+            .stApp {
+                background-image: url('https://source.unsplash.com/1600x900/?gym,fitness');
+                background-size: cover;
+                color: white;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
     
-    if 'logged_in' not in st.session_state:
-        st.session_state['logged_in'] = False
-    if 'show_signup' not in st.session_state:
-        st.session_state['show_signup'] = False
+    st.title("🏋️ Gym Reps & Weight Tracker")
     
-    if not st.session_state['logged_in']:
-        if st.session_state['show_signup']:
-            signup_page()
-        else:
-            login_page()
-    else:
-        main_app()
-
+    date_str = str(datetime.date.today())
+    
+    tab1, tab2, tab3 = st.tabs(["Workout Tracker", "Weight Tracker", "Past Workouts"])
+    
+    with tab1:
+        st.subheader(f"Today's Workout Plan ({datetime.datetime.today().strftime('%A')})")
+        today_exercises = get_today_workout()
+        
+        df = load_workout_data()
+        
+        # Create 2 columns for exercise input
+        col1, col2 = st.columns(2)
+        with col1:
+            exercise = st.selectbox("Select Exercise:", today_exercises)
+            reps = st.number_input("Enter Number of Reps:", min_value=1, step=1)
+        with col2:
+            set_number = st.number_input("Set Number:", min_value=1, step=1)
+            weight = st.number_input("Enter Weight Used (kg):", min_value=0.0, step=0.5)
+        
+        # Center the Add Entry button
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("Add Entry", use_container_width=True):
+                new_entry = pd.DataFrame([[date_str, exercise, set_number, reps, weight]], 
+                                      columns=["Date", "Exercise", "Set", "Reps", "Weight"])
+                df = pd.concat([df, new_entry], ignore_index=True)
+                save_workout_data(df)
+                st.success(f"Added Set {set_number}: {reps} reps for {exercise} with {weight} kg")
+                st.rerun()
+        
+        st.subheader("Workout History")
+        filtered_df = df[df["Date"] == date_str]
+        st.dataframe(filtered_df)
+        
+        # Center the Delete button
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("Delete Today's Data", use_container_width=True):
+                df = df[df["Date"] != date_str]
+                save_workout_data(df)
+                st.success("Deleted all records for today!")
+                st.rerun()
+    
+    with tab2:
+        df_weight = load_weight_data()
+        
+        # Create columns for weight input
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            weight = st.number_input("Enter Your Weight (kg):", min_value=0.0, step=0.1)
+            if st.button("Save Weight", use_container_width=True):
+                df_weight = df_weight[df_weight["Date"] != date_str]
+                new_entry = pd.DataFrame([[date_str, weight]], columns=["Date", "Weight"])
+                df_weight = pd.concat([df_weight, new_entry], ignore_index=True)
+                save_weight_data(df_weight)
+                st.success(f"Weight recorded: {weight} kg")
+                st.rerun()
+        
+        st.subheader("Weight History")
+        st.dataframe(df_weight)
+        
+        # Center the Delete button
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("Delete Today's Weight", use_container_width=True):
+                df_weight = df_weight[df_weight["Date"] != date_str]
+                save_weight_data(df_weight)
+                st.success("Deleted today's weight record!")
+                st.rerun()
+    
+    with tab3:
+        st.subheader("View Past Workouts")
+        selected_date = st.date_input("Select Date to View:")
+        past_df = df[df["Date"] == str(selected_date)]
+        st.dataframe(past_df)
+    
 if __name__ == "__main__":
     main()
