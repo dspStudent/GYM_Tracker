@@ -1,0 +1,2 @@
+username,password,workout_config,user_info
+test1,a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3,"{'Monday': ['Squats', 'Chest Press', 'Pull-Ups', 'Leg Press', 'Overhead Press'], 'Tuesday': ['Rest'], 'Wednesday': ['Deadlifts', 'Bench Press', 'Rowing', 'Lunges', 'Calf Raises'], 'Thursday': ['Rest Day'], 'Friday': ['Rest Day'], 'Saturday': ['Rest Day'], 'Sunday': ['Rest Day']}","{'weight': 65.0, 'height': 163.0, 'goal': 'Body Recomposition', 'experience': 'Beginner (0-6 months)', 'days_per_week': 3, 'join_date': '2025-02-09'}"
