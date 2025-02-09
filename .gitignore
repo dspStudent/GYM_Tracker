@@ -65,3 +65,4 @@ coverage.xml
 
 # Any other specific configuration or sensitive files
 *.env
+*.xlsx
