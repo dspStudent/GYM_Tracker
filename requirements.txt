@@ -3,3 +3,4 @@ pandas
 google-generativeai
 langchain-google-genai
 python-dotenv
+pymongo

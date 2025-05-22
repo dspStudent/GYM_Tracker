@@ -2,6 +2,13 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 import hashlib
+from db import get_db, get_users_collection, get_workouts_collection, get_weights_collection
+
+# Initialize DB connection
+MONGO_CONNECTION_STRING = "mongodb+srv://dev:dev@cluster0.hwutjuq.mongodb.net/"
+
+def get_db_connection():
+    return get_db(MONGO_CONNECTION_STRING)
 import os
 import google.generativeai as genai
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -58,16 +65,38 @@ def setup_logger():
 # Initialize logger
 logger = setup_logger()
 
-# Initialize CSV files if they don't exist
-def init_excel_files():
-    files = {
-        'users.csv': ['username', 'password', 'workout_config'],
-        'workouts.csv': ['username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight'],
-        'weights.csv': ['username', 'Date', 'Weight']
-    }
-    for file, columns in files.items():
-        if not os.path.exists(file):
-            pd.DataFrame(columns=columns).to_csv(file, index=False)
+import pymongo
+
+# Initialize Database (e.g., create indexes)
+def init_db():
+    logger.info("Initializing database and creating indexes if they don't exist.")
+    try:
+        db = get_db_connection()
+        if db:
+            users_collection = get_users_collection(db)
+            workouts_collection = get_workouts_collection(db)
+            weights_collection = get_weights_collection(db)
+
+            # Create index for users collection (username should be unique)
+            users_collection.create_index([('username', pymongo.ASCENDING)], unique=True)
+            logger.info("Created/ensured index on 'username' (unique) for 'users' collection.")
+
+            # Create index for workouts collection
+            workouts_collection.create_index([('username', pymongo.ASCENDING)])
+            logger.info("Created/ensured index on 'username' for 'workouts' collection.")
+
+            # Create index for weights collection
+            weights_collection.create_index([('username', pymongo.ASCENDING)])
+            logger.info("Created/ensured index on 'username' for 'weights' collection.")
+            
+            logger.info("Database initialization complete.")
+        else:
+            logger.error("Failed to connect to MongoDB. Database initialization skipped.")
+    except pymongo.errors.PyMongoError as e:
+        logger.error(f"MongoDB error during database initialization: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error during database initialization: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
 # Default workout configuration
 DEFAULT_WORKOUT_CONFIG = {
@@ -85,149 +114,258 @@ def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def load_users():
-    if os.path.exists('users.csv'):
-        return pd.read_csv('users.csv')
-    return pd.DataFrame(columns=['username', 'password', 'workout_config'])
+    logger.info("Loading users from MongoDB.")
+    try:
+        db = get_db_connection()
+        if db:
+            users_collection = get_users_collection(db)
+            users_data = list(users_collection.find({}, {"_id": 0}))  # Exclude _id field
+            if users_data:
+                return pd.DataFrame(users_data)
+        return pd.DataFrame(columns=['username', 'password', 'workout_config', 'user_info'])
+    except Exception as e:
+        logger.error(f"Error loading users from MongoDB: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return pd.DataFrame(columns=['username', 'password', 'workout_config', 'user_info'])
 
 def save_user(username, password, workout_config, user_info):
     logger.info(f"Creating new user account for username: {username}")
     try:
-        users_df = load_users()
-        new_user = pd.DataFrame([[username, hash_password(password), str(workout_config), str(user_info)]], 
-                               columns=['username', 'password', 'workout_config', 'user_info'])
-        users_df = pd.concat([users_df, new_user], ignore_index=True)
-        users_df.to_csv('users.csv', index=False)
-        logger.info(f"Successfully created user account for: {username}")
+        db = get_db_connection()
+        if db:
+            users_collection = get_users_collection(db)
+            user_document = {
+                'username': username,
+                'password': hash_password(password),
+                'workout_config': str(workout_config),
+                'user_info': str(user_info)
+            }
+            users_collection.insert_one(user_document)
+            logger.info(f"Successfully created user account for: {username} in MongoDB.")
+        else:
+            logger.error("Failed to connect to MongoDB. User not saved.")
+            raise Exception("Failed to connect to MongoDB")
     except Exception as e:
-        logger.error(f"Error creating user account: {str(e)}")
+        logger.error(f"Error creating user account in MongoDB: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise
 
 def authenticate(username, password):
     logger.info(f"Attempting authentication for username: {username}")
     try:
-        users_df = load_users()
-        user = users_df[users_df['username'] == username]
-        if not user.empty:
-            if user.iloc[0]['password'] == hash_password(password):
+        db = get_db_connection()
+        if db:
+            users_collection = get_users_collection(db)
+            user_data = users_collection.find_one({'username': username})
+            if user_data and user_data['password'] == hash_password(password):
                 logger.info(f"Successful authentication for username: {username}")
                 return True
         logger.warning(f"Failed authentication attempt for username: {username}")
         return False
     except Exception as e:
-        logger.error(f"Error during authentication: {str(e)}")
+        logger.error(f"Error during authentication with MongoDB: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         return False
 
 # Data handling functions
 def load_workout_data(username):
-    if os.path.exists('workouts.csv'):
-        df = pd.read_csv('workouts.csv')
-        return df[df['username'] == username]
-    return pd.DataFrame(columns=['username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight'])
+    logger.info(f"Loading workout data for user: {username} from MongoDB.")
+    try:
+        db = get_db_connection()
+        if db:
+            workouts_collection = get_workouts_collection(db)
+            # Ensure username field matches, and exclude _id
+            workout_data = list(workouts_collection.find({'username': username}, {"_id": 0})) 
+            if workout_data:
+                # Convert list of dicts to DataFrame
+                df = pd.DataFrame(workout_data)
+                # Ensure correct column order and handle missing columns
+                expected_columns = ['username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight']
+                df = df.reindex(columns=expected_columns)
+                return df
+        # Return empty DataFrame with correct columns if no data or DB connection fails
+        return pd.DataFrame(columns=['username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight'])
+    except Exception as e:
+        logger.error(f"Error loading workout data from MongoDB: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return pd.DataFrame(columns=['username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight'])
 
 def save_workout_data(df, username):
-    logger.info(f"Saving workout data for user: {username}")
+    logger.info(f"Saving workout data for user: {username} to MongoDB.")
     try:
-        all_df = pd.read_csv('workouts.csv')
-        all_df = all_df[all_df['username'] != username]
-        df['username'] = username
-        final_df = pd.concat([all_df, df], ignore_index=True)
-        final_df.to_csv('workouts.csv', index=False)
-        logger.info(f"Successfully saved workout data for user: {username}")
+        db = get_db_connection()
+        if db:
+            workouts_collection = get_workouts_collection(db)
+            # Delete existing workout data for the user
+            delete_result = workouts_collection.delete_many({'username': username})
+            logger.info(f"Deleted {delete_result.deleted_count} existing workout documents for user: {username}.")
+            
+            # Convert DataFrame to list of dictionaries for insertion
+            # Ensure 'username' is set for all records in the DataFrame
+            df['username'] = username 
+            records_to_insert = df.to_dict('records')
+            
+            if records_to_insert:
+                insert_result = workouts_collection.insert_many(records_to_insert)
+                logger.info(f"Successfully inserted {len(insert_result.inserted_ids)} workout documents for user: {username}.")
+            else:
+                logger.info(f"No workout data to insert for user: {username}.")
+        else:
+            logger.error("Failed to connect to MongoDB. Workout data not saved.")
+            raise Exception("Failed to connect to MongoDB")
     except Exception as e:
-        logger.error(f"Error saving workout data: {str(e)}")
+        logger.error(f"Error saving workout data to MongoDB: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise
 
 def load_weight_data(username):
-    if os.path.exists('weights.csv'):
-        df = pd.read_csv('weights.csv')
-        return df[df['username'] == username]
-    return pd.DataFrame(columns=['username', 'Date', 'Weight'])
+    logger.info(f"Loading weight data for user: {username} from MongoDB.")
+    try:
+        db = get_db_connection()
+        if db:
+            weights_collection = get_weights_collection(db)
+            # Ensure username field matches, and exclude _id
+            weight_data = list(weights_collection.find({'username': username}, {"_id": 0}))
+            if weight_data:
+                # Convert list of dicts to DataFrame
+                df = pd.DataFrame(weight_data)
+                # Ensure correct column order and handle missing columns
+                expected_columns = ['username', 'Date', 'Weight']
+                df = df.reindex(columns=expected_columns)
+                return df
+        # Return empty DataFrame with correct columns if no data or DB connection fails
+        return pd.DataFrame(columns=['username', 'Date', 'Weight'])
+    except Exception as e:
+        logger.error(f"Error loading weight data from MongoDB: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return pd.DataFrame(columns=['username', 'Date', 'Weight'])
 
 def save_weight_data(df, username):
-    all_df = pd.read_csv('weights.csv')
-    all_df = all_df[all_df['username'] != username]
-    df['username'] = username
-    final_df = pd.concat([all_df, df], ignore_index=True)
-    final_df.to_csv('weights.csv', index=False)
+    logger.info(f"Saving weight data for user: {username} to MongoDB.")
+    try:
+        db = get_db_connection()
+        if db:
+            weights_collection = get_weights_collection(db)
+            # Delete existing weight data for the user
+            delete_result = weights_collection.delete_many({'username': username})
+            logger.info(f"Deleted {delete_result.deleted_count} existing weight documents for user: {username}.")
+            
+            # Convert DataFrame to list of dictionaries for insertion
+            # Ensure 'username' is set for all records in the DataFrame
+            df['username'] = username
+            records_to_insert = df.to_dict('records')
+            
+            if records_to_insert:
+                insert_result = weights_collection.insert_many(records_to_insert)
+                logger.info(f"Successfully inserted {len(insert_result.inserted_ids)} weight documents for user: {username}.")
+            else:
+                logger.info(f"No weight data to insert for user: {username}.")
+        else:
+            logger.error("Failed to connect to MongoDB. Weight data not saved.")
+            raise Exception("Failed to connect to MongoDB")
+    except Exception as e:
+        logger.error(f"Error saving weight data to MongoDB: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise
 
 def get_user_workout_config(username):
-    users_df = load_users()
-    user = users_df[users_df['username'] == username]
-    if not user.empty:
-        return eval(user.iloc[0]['workout_config'])
-    return DEFAULT_WORKOUT_CONFIG
+    logger.info(f"Getting workout config for user: {username} from MongoDB.")
+    try:
+        db = get_db_connection()
+        if db:
+            users_collection = get_users_collection(db)
+            user_data = users_collection.find_one({'username': username})
+            if user_data and 'workout_config' in user_data:
+                return eval(user_data['workout_config'])
+        return DEFAULT_WORKOUT_CONFIG
+    except Exception as e:
+        logger.error(f"Error getting workout config from MongoDB: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return DEFAULT_WORKOUT_CONFIG
 
 def update_workout_config(username, new_config):
-    logger.info(f"Updating workout config for user: {username}")
+    logger.info(f"Updating workout config for user: {username} in MongoDB.")
     try:
-        users_df = load_users()
-        users_df.loc[users_df['username'] == username, 'workout_config'] = str(new_config)
-        users_df.to_csv('users.csv', index=False)
-        logger.info(f"Successfully updated workout config for user: {username}")
+        db = get_db_connection()
+        if db:
+            users_collection = get_users_collection(db)
+            users_collection.update_one(
+                {'username': username},
+                {'$set': {'workout_config': str(new_config)}}
+            )
+            logger.info(f"Successfully updated workout config for user: {username} in MongoDB.")
+        else:
+            logger.error("Failed to connect to MongoDB. Workout config not updated.")
+            raise Exception("Failed to connect to MongoDB")
     except Exception as e:
-        logger.error(f"Error updating workout config: {str(e)}")
+        logger.error(f"Error updating workout config in MongoDB: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise
 
 def get_user_info(username):
-    logger.info(f"Getting user info for: {username}")
+    logger.info(f"Getting user info for: {username} from MongoDB.")
     try:
-        users_df = load_users()
-        user = users_df[users_df['username'] == username]
-        if not user.empty:
-            user_info = user.iloc[0]['user_info']
-            logger.debug(f"Raw user_info from DB: {user_info}")
-            # Handle the case where user_info might be nan or empty
-            if pd.isna(user_info) or user_info == '':
-                logger.warning(f"No user info found for {username}, returning default")
-                return {}
-            try:
-                # Convert string representation of dict to actual dict
-                return eval(user_info) if isinstance(user_info, str) else user_info
-            except:
-                logger.error(f"Error parsing user_info: {user_info}")
-                return {}
-        logger.warning(f"User {username} not found")
+        db = get_db_connection()
+        if db:
+            users_collection = get_users_collection(db)
+            user_data = users_collection.find_one({'username': username})
+            if user_data and 'user_info' in user_data:
+                user_info_str = user_data['user_info']
+                logger.debug(f"Raw user_info from MongoDB: {user_info_str}")
+                if pd.isna(user_info_str) or user_info_str == '':
+                    logger.warning(f"No user info found for {username} in MongoDB, returning default")
+                    return {}
+                try:
+                    return eval(user_info_str) if isinstance(user_info_str, str) else user_info_str
+                except Exception as parse_error:
+                    logger.error(f"Error parsing user_info from MongoDB: {user_info_str} - {parse_error}")
+                    return {}
+        logger.warning(f"User {username} not found in MongoDB.")
         return {}
     except Exception as e:
-        logger.error(f"Error getting user info: {str(e)}")
+        logger.error(f"Error getting user info from MongoDB: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         return {}
 
 def update_user_info(username, new_info):
-    logger.info(f"Attempting to update user info for: {username}")
+    logger.info(f"Attempting to update user info for: {username} in MongoDB.")
     logger.debug(f"New info to be updated: {new_info}")
     
     try:
-        # Load current data
-        users_df = load_users()
-        if username not in users_df['username'].values:
-            logger.error(f"Username {username} not found in database")
-            raise ValueError(f"User {username} not found")
-        
-        # Get current user data
-        current_data = users_df[users_df['username'] == username].iloc[0].to_dict()
-        logger.debug(f"Current user data: {current_data}")
-        
-        # Update user_info
-        users_df.loc[users_df['username'] == username, 'user_info'] = str(new_info)
-        
-        # Verify the update
-        updated_data = users_df[users_df['username'] == username].iloc[0].to_dict()
-        logger.debug(f"Updated user data: {updated_data}")
-        
-        # Save to CSV
-        users_df.to_csv('users.csv', index=False)
-        logger.info(f"Successfully updated user info for: {username}")
-        
-        return True
+        db = get_db_connection()
+        if db:
+            users_collection = get_users_collection(db)
+            # Check if user exists
+            if users_collection.find_one({'username': username}) is None:
+                logger.error(f"Username {username} not found in MongoDB.")
+                raise ValueError(f"User {username} not found")
+
+            users_collection.update_one(
+                {'username': username},
+                {'$set': {'user_info': str(new_info)}}
+            )
+            logger.info(f"Successfully updated user info for: {username} in MongoDB.")
+            return True
+        else:
+            logger.error("Failed to connect to MongoDB. User info not updated.")
+            raise Exception("Failed to connect to MongoDB")
     except Exception as e:
-        logger.error(f"Error updating user info: {str(e)}")
+        logger.error(f"Error updating user info in MongoDB: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise
+
+# Ensure init_excel_files is either removed or adapted if some CSVs are still needed.
+# For now, we assume it's not needed for users.csv anymore.
+# If workouts.csv and weights.csv are also moving to MongoDB, this function will need more changes.
+def init_excel_files():
+    files = {
+        # 'users.csv': ['username', 'password', 'workout_config', 'user_info'], # Removed users.csv
+        # 'workouts.csv': ['username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight'], # Removed workouts.csv
+        # 'weights.csv': ['username', 'Date', 'Weight'] # Removed weights.csv
+    }
+    for file, columns in files.items():
+        if not os.path.exists(file):
+            pd.DataFrame(columns=columns).to_csv(file, index=False)
 
 def get_ai_workout_plan(user_info):
     logger.info(f"Generating AI workout plan for user info: {user_info}")
@@ -987,7 +1125,7 @@ def main_app():
 def main():
     logger.info("Starting application")
     try:
-        init_excel_files()
+        init_db()
         
         if 'logged_in' not in st.session_state:
             st.session_state['logged_in'] = False
