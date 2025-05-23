@@ -58,6 +58,46 @@ def get_weights_collection(db):
     """
     return db['weights']
 
+from bson import ObjectId
+
+def get_workout_by_id(db, workout_id_str):
+    """
+    Fetches a single workout entry by its _id.
+
+    Args:
+        db (pymongo.database.Database): The database object.
+        workout_id_str (str): The string representation of the workout's ObjectId.
+
+    Returns:
+        dict: The workout document if found, else None.
+    """
+    try:
+        workouts_collection = get_workouts_collection(db)
+        return workouts_collection.find_one({"_id": ObjectId(workout_id_str)})
+    except Exception as e:
+        # Consider logging the error e.g., using a logger object
+        print(f"Error fetching workout by ID {workout_id_str}: {e}")
+        return None
+
+def get_weight_by_id(db, weight_id_str):
+    """
+    Fetches a single weight entry by its _id.
+
+    Args:
+        db (pymongo.database.Database): The database object.
+        weight_id_str (str): The string representation of the weight's ObjectId.
+
+    Returns:
+        dict: The weight document if found, else None.
+    """
+    try:
+        weights_collection = get_weights_collection(db)
+        return weights_collection.find_one({"_id": ObjectId(weight_id_str)})
+    except Exception as e:
+        # Consider logging the error
+        print(f"Error fetching weight by ID {weight_id_str}: {e}")
+        return None
+
 if __name__ == '__main__':
     # Example usage (optional, for testing)
     CONNECTION_STRING = "mongodb+srv://dev:dev@cluster0.hwutjuq.mongodb.net/"

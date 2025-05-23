@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 import hashlib
-from db import get_db, get_users_collection, get_workouts_collection, get_weights_collection
+from db import get_db, get_users_collection, get_workouts_collection, get_weights_collection, get_workout_by_id, get_weight_by_id # Added get_weight_by_id
+from bson import ObjectId # Import ObjectId
 
 # Initialize DB connection
 MONGO_CONNECTION_STRING = "mongodb+srv://dev:dev@cluster0.hwutjuq.mongodb.net/"
@@ -72,7 +73,7 @@ def init_db():
     logger.info("Initializing database and creating indexes if they don't exist.")
     try:
         db = get_db_connection()
-        if db:
+        if db is not None:
             users_collection = get_users_collection(db)
             workouts_collection = get_workouts_collection(db)
             weights_collection = get_weights_collection(db)
@@ -117,7 +118,7 @@ def load_users():
     logger.info("Loading users from MongoDB.")
     try:
         db = get_db_connection()
-        if db:
+        if db is not None:
             users_collection = get_users_collection(db)
             users_data = list(users_collection.find({}, {"_id": 0}))  # Exclude _id field
             if users_data:
@@ -132,7 +133,7 @@ def save_user(username, password, workout_config, user_info):
     logger.info(f"Creating new user account for username: {username}")
     try:
         db = get_db_connection()
-        if db:
+        if db is not None:
             users_collection = get_users_collection(db)
             user_document = {
                 'username': username,
@@ -154,7 +155,7 @@ def authenticate(username, password):
     logger.info(f"Attempting authentication for username: {username}")
     try:
         db = get_db_connection()
-        if db:
+        if db is not None:
             users_collection = get_users_collection(db)
             user_data = users_collection.find_one({'username': username})
             if user_data and user_data['password'] == hash_password(password):
@@ -172,19 +173,23 @@ def load_workout_data(username):
     logger.info(f"Loading workout data for user: {username} from MongoDB.")
     try:
         db = get_db_connection()
-        if db:
+        if db is not None:
             workouts_collection = get_workouts_collection(db)
-            # Ensure username field matches, and exclude _id
-            workout_data = list(workouts_collection.find({'username': username}, {"_id": 0})) 
+            # Fetch all fields including _id
+            workout_data = list(workouts_collection.find({'username': username})) 
             if workout_data:
                 # Convert list of dicts to DataFrame
                 df = pd.DataFrame(workout_data)
                 # Ensure correct column order and handle missing columns
-                expected_columns = ['username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight']
-                df = df.reindex(columns=expected_columns)
+                # Add '_id' to expected columns if you want it in the DataFrame,
+                # or handle it separately when iterating.
+                # For this task, we'll ensure it's present for button keys.
+                expected_columns = ['_id', 'username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight']
+                # Reindex, adding missing columns with NaN, and ensuring _id is present
+                df = df.reindex(columns=expected_columns) 
                 return df
         # Return empty DataFrame with correct columns if no data or DB connection fails
-        return pd.DataFrame(columns=['username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight'])
+        return pd.DataFrame(columns=['_id', 'username', 'Date', 'Exercise', 'Set', 'Reps', 'Weight'])
     except Exception as e:
         logger.error(f"Error loading workout data from MongoDB: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
@@ -194,7 +199,7 @@ def save_workout_data(df, username):
     logger.info(f"Saving workout data for user: {username} to MongoDB.")
     try:
         db = get_db_connection()
-        if db:
+        if db is not None:
             workouts_collection = get_workouts_collection(db)
             # Delete existing workout data for the user
             delete_result = workouts_collection.delete_many({'username': username})
@@ -204,9 +209,16 @@ def save_workout_data(df, username):
             # Ensure 'username' is set for all records in the DataFrame
             df['username'] = username 
             records_to_insert = df.to_dict('records')
+
+            # Process records to remove invalid _id fields
+            processed_records = []
+            for record in records_to_insert:
+                if '_id' in record and (pd.isna(record['_id']) or record['_id'] is None):
+                    del record['_id']  # Let MongoDB generate _id for new entries
+                processed_records.append(record)
             
-            if records_to_insert:
-                insert_result = workouts_collection.insert_many(records_to_insert)
+            if processed_records:
+                insert_result = workouts_collection.insert_many(processed_records)
                 logger.info(f"Successfully inserted {len(insert_result.inserted_ids)} workout documents for user: {username}.")
             else:
                 logger.info(f"No workout data to insert for user: {username}.")
@@ -222,19 +234,19 @@ def load_weight_data(username):
     logger.info(f"Loading weight data for user: {username} from MongoDB.")
     try:
         db = get_db_connection()
-        if db:
+        if db is not None:
             weights_collection = get_weights_collection(db)
-            # Ensure username field matches, and exclude _id
-            weight_data = list(weights_collection.find({'username': username}, {"_id": 0}))
+            # Fetch all fields including _id
+            weight_data = list(weights_collection.find({'username': username}))
             if weight_data:
                 # Convert list of dicts to DataFrame
                 df = pd.DataFrame(weight_data)
                 # Ensure correct column order and handle missing columns
-                expected_columns = ['username', 'Date', 'Weight']
-                df = df.reindex(columns=expected_columns)
+                expected_columns = ['_id', 'username', 'Date', 'Weight']
+                df = df.reindex(columns=expected_columns) # Add _id to expected columns
                 return df
         # Return empty DataFrame with correct columns if no data or DB connection fails
-        return pd.DataFrame(columns=['username', 'Date', 'Weight'])
+        return pd.DataFrame(columns=['_id', 'username', 'Date', 'Weight'])
     except Exception as e:
         logger.error(f"Error loading weight data from MongoDB: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
@@ -244,7 +256,7 @@ def save_weight_data(df, username):
     logger.info(f"Saving weight data for user: {username} to MongoDB.")
     try:
         db = get_db_connection()
-        if db:
+        if db is not None:
             weights_collection = get_weights_collection(db)
             # Delete existing weight data for the user
             delete_result = weights_collection.delete_many({'username': username})
@@ -254,9 +266,16 @@ def save_weight_data(df, username):
             # Ensure 'username' is set for all records in the DataFrame
             df['username'] = username
             records_to_insert = df.to_dict('records')
+
+            # Process records to remove invalid _id fields
+            processed_records = []
+            for record in records_to_insert:
+                if '_id' in record and (pd.isna(record['_id']) or record['_id'] is None):
+                    del record['_id']  # Let MongoDB generate _id for new entries
+                processed_records.append(record)
             
-            if records_to_insert:
-                insert_result = weights_collection.insert_many(records_to_insert)
+            if processed_records:
+                insert_result = weights_collection.insert_many(processed_records)
                 logger.info(f"Successfully inserted {len(insert_result.inserted_ids)} weight documents for user: {username}.")
             else:
                 logger.info(f"No weight data to insert for user: {username}.")
@@ -272,7 +291,7 @@ def get_user_workout_config(username):
     logger.info(f"Getting workout config for user: {username} from MongoDB.")
     try:
         db = get_db_connection()
-        if db:
+        if db is not None:
             users_collection = get_users_collection(db)
             user_data = users_collection.find_one({'username': username})
             if user_data and 'workout_config' in user_data:
@@ -287,7 +306,7 @@ def update_workout_config(username, new_config):
     logger.info(f"Updating workout config for user: {username} in MongoDB.")
     try:
         db = get_db_connection()
-        if db:
+        if db is not None:
             users_collection = get_users_collection(db)
             users_collection.update_one(
                 {'username': username},
@@ -306,7 +325,7 @@ def get_user_info(username):
     logger.info(f"Getting user info for: {username} from MongoDB.")
     try:
         db = get_db_connection()
-        if db:
+        if db is not None:
             users_collection = get_users_collection(db)
             user_data = users_collection.find_one({'username': username})
             if user_data and 'user_info' in user_data:
@@ -333,7 +352,7 @@ def update_user_info(username, new_info):
     
     try:
         db = get_db_connection()
-        if db:
+        if db is not None:
             users_collection = get_users_collection(db)
             # Check if user exists
             if users_collection.find_one({'username': username}) is None:
@@ -535,7 +554,8 @@ def main_app():
         
         with st.sidebar:
             st.title(f"Welcome, {username}!")
-            page = st.radio("Navigation", ["Workout Tracker", "Profile", "Logout"])
+            # Removed "Date Config" from sidebar navigation
+            page = st.radio("Navigation", ["Workout Tracker", "Profile", "Config", "Logout"]) 
             
             if page == "Logout":
                 st.session_state['logged_in'] = False
@@ -659,11 +679,64 @@ def main_app():
                 logger.error(f"Error in profile page: {str(e)}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 st.error("Error loading profile page. Please try again.")
+
+        elif page == "Config":
+            st.title("⚙️ Config")
+            st.subheader("Configure Log Date")
+
+            # Ensure selected_date is initialized
+            if 'selected_date' not in st.session_state:
+                st.session_state.selected_date = date.today()
+
+            new_date_config = st.date_input(
+                "Select date for logging/viewing entries:",
+                value=st.session_state.selected_date,
+                max_value=date.today(), # Prevent future dates
+                help="This date will be used for logging new entries and viewing past entries in trackers."
+            )
+            if new_date_config != st.session_state.selected_date:
+                st.session_state.selected_date = new_date_config
+                # Also update custom_log_date if it exists, to keep it in sync when not actively using "Log for a Different Date" mode
+                if 'custom_log_date' in st.session_state:
+                    st.session_state.custom_log_date = new_date_config
+                # If setting a custom date, implicitly switch mode for clarity, or let tab-specific controls handle it.
+                # For now, just setting selected_date. Tabs will use this.
+                # st.session_state.date_config_mode = "Log for a Different Date" # Optional: auto-switch mode
+                st.rerun()
+
+            if st.button("Set Log Date to Today"):
+                if st.session_state.selected_date != date.today():
+                    st.session_state.selected_date = date.today()
+                    if 'custom_log_date' in st.session_state: # Keep custom_log_date in sync
+                        st.session_state.custom_log_date = date.today()
+                    # st.session_state.date_config_mode = "Log for Today" # Optional: auto-switch mode
+                    st.rerun()
+                else:
+                    st.info("Log date is already set to today.")
+            
+            st.info(f"Entries in 'Workout Tracker' and 'Weight Tracker' will now be for: {st.session_state.selected_date.strftime('%Y-%m-%d')}")
         
-        else:
+        else: # Default to Workout Tracker page (and other main tabs)
+            # Initialize date-related session state variables if they don't exist
+            if 'selected_date' not in st.session_state:
+                st.session_state.selected_date = date.today()
+            if 'date_config_mode' not in st.session_state:
+                st.session_state.date_config_mode = "Log for Today"
+            # custom_log_date might be needed later if we allow selecting a date for "Log for a Different Date" mode
+            if 'custom_log_date' not in st.session_state:
+                 st.session_state.custom_log_date = date.today()
+
+            # Determine the current log date based on the mode
+            if st.session_state.date_config_mode == "Log for Today":
+                st.session_state.selected_date = date.today() # Ensure it's always today in this mode
+            # If "Log for a Different Date", selected_date will be set by a date_input (to be added in next step)
+            # For now, it will hold its previous value or today's date if just switched.
+
+            current_log_date = st.session_state.selected_date
+            date_str = str(current_log_date) 
+            today = current_log_date.strftime('%A') 
+
             st.title("🏋️ Gym Reps & Weight Tracker")
-            date_str = str(date.today())
-            today = datetime.today().strftime('%A')
             
             tab1, tab2, tab3, tab4, tab5 = st.tabs([
                 "Workout Tracker", 
@@ -674,8 +747,9 @@ def main_app():
             ])
             
             with tab1:
-                st.subheader(f"Today's Workout Plan ({today})")
-                
+                st.info(f"Displaying and logging entries for: {date_str}") # Added informational message
+                st.subheader(f"Workout Plan for {today} ({date_str})") 
+
                 # Input form
                 col1, col2 = st.columns(2)
                 with col1:
@@ -696,14 +770,165 @@ def main_app():
                     st.rerun()
                 
                 # Show today's workout
-                df = load_workout_data(username)
-                today_workout = df[df['Date'] == date_str]
-                if not today_workout.empty:
+                df_all_workouts = load_workout_data(username) # Renamed to avoid confusion
+                today_workout_entries = df_all_workouts[df_all_workouts['Date'] == date_str]
+
+                if not today_workout_entries.empty:
                     st.subheader("Today's Progress")
-                    st.dataframe(today_workout[['Exercise', 'Set', 'Reps', 'Weight']])
-            
+                    for index, entry in today_workout_entries.iterrows(): # Use iterrows() for DataFrames
+                        entry_id = str(entry['_id']) # Ensure _id is a string for keys
+                        
+                        col1, col2, col3, col4, col5, col6 = st.columns([3,1,1,1,1,1])
+                        with col1:
+                            st.write(f"{entry['Exercise']}")
+                        with col2:
+                            st.write(f"Set: {entry['Set']}")
+                        with col3:
+                            st.write(f"Reps: {entry['Reps']}")
+                        with col4:
+                            st.write(f"Wt: {entry['Weight']}")
+                        with col5:
+                            if st.button("Edit", key=f"edit_{entry_id}"):
+                                st.session_state.editing_workout_id = entry_id
+                                st.rerun()
+                        with col6:
+                            if st.button("Delete", key=f"delete_{entry_id}"):
+                                st.session_state.deleting_workout_id = entry_id
+                                st.rerun()
+                else:
+                    st.info("No workouts logged for today yet.")
+
+                # Placeholder for edit/delete actions based on session state
+                # Note: These placeholders were for debugging and might be removed or integrated into the forms later.
+                # For now, they are commented out to avoid clutter as the forms themselves indicate the state.
+                # if 'editing_workout_id' in st.session_state and st.session_state.editing_workout_id:
+                #     st.write(f"Placeholder: Editing workout ID {st.session_state.editing_workout_id}")
+                
+                # if 'deleting_workout_id' in st.session_state and st.session_state.deleting_workout_id:
+                #     st.write(f"Placeholder: Attempting to delete workout ID {st.session_state.deleting_workout_id}")
+                
+                # --- Edit Workout Form ---
+                if 'editing_workout_id' in st.session_state and st.session_state.editing_workout_id:
+                    workout_to_edit_id_str = st.session_state.editing_workout_id
+                    db_conn = get_db_connection()
+                    if db_conn is not None:
+                        workout_to_edit = get_workout_by_id(db_conn, workout_to_edit_id_str)
+
+                        if workout_to_edit:
+                            st.subheader("Edit Workout Entry")
+                            with st.form(key="edit_workout_form"):
+                                # Assuming workout_config[today] is available and relevant
+                                # If exercises can be custom, use st.text_input
+                                current_exercise_index = 0 # Default
+                                if workout_to_edit['Exercise'] in workout_config[today]:
+                                    current_exercise_index = workout_config[today].index(workout_to_edit['Exercise'])
+                                
+                                edited_exercise = st.selectbox(
+                                    "Exercise:", 
+                                    options=workout_config[today], 
+                                    index=current_exercise_index,
+                                    key=f"edit_exercise_{workout_to_edit_id_str}"
+                                )
+                                edited_set = st.number_input(
+                                    "Set:", 
+                                    value=int(workout_to_edit['Set']), 
+                                    min_value=1, 
+                                    step=1,
+                                    key=f"edit_set_{workout_to_edit_id_str}"
+                                )
+                                edited_reps = st.number_input(
+                                    "Reps:", 
+                                    value=int(workout_to_edit['Reps']), 
+                                    min_value=1, 
+                                    step=1,
+                                    key=f"edit_reps_{workout_to_edit_id_str}"
+                                )
+                                edited_weight = st.number_input(
+                                    "Weight (kg):", 
+                                    value=float(workout_to_edit['Weight']), 
+                                    min_value=0.0, 
+                                    step=0.5,
+                                    key=f"edit_weight_{workout_to_edit_id_str}"
+                                )
+
+                                save_button = st.form_submit_button("Save Changes")
+                                cancel_button = st.form_submit_button("Cancel")
+
+                                if save_button:
+                                    try:
+                                        workouts_collection = get_workouts_collection(db_conn)
+                                        query_id = ObjectId(workout_to_edit_id_str)
+                                        
+                                        update_data = {
+                                            "$set": {
+                                                "Exercise": edited_exercise,
+                                                "Set": edited_set,
+                                                "Reps": edited_reps,
+                                                "Weight": edited_weight
+                                            }
+                                        }
+                                        result = workouts_collection.update_one({"_id": query_id}, update_data)
+                                        
+                                        if result.modified_count > 0:
+                                            st.success("Workout updated successfully!")
+                                        else:
+                                            st.warning("No changes made or workout not found.")
+                                        st.session_state.editing_workout_id = None
+                                        st.rerun()
+                                    except Exception as e:
+                                        logger.error(f"Error updating workout: {e}")
+                                        st.error(f"Failed to update workout: {e}")
+                                
+                                if cancel_button:
+                                    st.session_state.editing_workout_id = None
+                                    st.rerun()
+                        else:
+                            st.error("Could not find the workout entry to edit.")
+                            st.session_state.editing_workout_id = None # Clear if not found
+                    else:
+                        st.error("Failed to connect to database for editing.")
+                        st.session_state.editing_workout_id = None
+                
+                # --- Delete Workout Confirmation ---
+                if 'deleting_workout_id' in st.session_state and st.session_state.deleting_workout_id:
+                    workout_id_to_delete_str = st.session_state.deleting_workout_id
+                    st.warning(f"Are you sure you want to delete workout entry {workout_id_to_delete_str}? This action cannot be undone.")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Confirm Delete", key=f"confirm_delete_{workout_id_to_delete_str}"):
+                            try:
+                                db_conn = get_db_connection()
+                                if db_conn is not None:
+                                    workouts_collection = get_workouts_collection(db_conn)
+                                    query_id = ObjectId(workout_id_to_delete_str)
+                                    
+                                    result = workouts_collection.delete_one({"_id": query_id})
+                                    
+                                    if result.deleted_count > 0:
+                                        st.success("Workout entry deleted successfully!")
+                                    else:
+                                        st.warning("Workout entry not found or already deleted.")
+                                    st.session_state.deleting_workout_id = None
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to connect to the database for deletion.")
+                            except Exception as e:
+                                logger.error(f"Error deleting workout: {e}")
+                                st.error(f"Failed to delete workout entry: {e}")
+                                # Optionally keep deleting_workout_id to allow another attempt or require cancel
+                                # st.session_state.deleting_workout_id = None # Or keep it to retry
+                    with col2:
+                        if st.button("Cancel Delete", key=f"cancel_delete_{workout_id_to_delete_str}"):
+                            st.session_state.deleting_workout_id = None
+                            st.rerun()
+
+
             with tab2:
                 st.subheader("Weight Tracker")
+                st.info(f"Displaying and logging entries for: {date_str}") # Added informational message
+                # Visual separator was here, can be kept if desired after this markdown
+                st.markdown("---") 
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -731,9 +956,130 @@ def main_app():
                             st.error("Failed to save weight. Please try again.")
                 
                 # Show weight history
-                df_weight = load_weight_data(username)
-                if not df_weight.empty:
-                    st.line_chart(df_weight.set_index('Date')['Weight'])
+                df_all_weights = load_weight_data(username) # Load all weight data for the chart
+                if not df_all_weights.empty:
+                    st.line_chart(df_all_weights.set_index('Date')['Weight']) # Chart shows all data
+
+                    # Filter entries for the selected date for listing, edit, and delete
+                    df_selected_date_weights = df_all_weights[df_all_weights['Date'] == date_str]
+
+                    st.subheader(f"Weight Entries for {date_str}") # Updated subheader
+                    if not df_selected_date_weights.empty:
+                        for index, entry in df_selected_date_weights.iterrows():
+                            entry_id_str = str(entry['_id'])
+                            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+                            with col1:
+                                st.write(f"Date: {entry['Date']}") # This will always be date_str
+                            with col2:
+                                st.write(f"Weight: {entry['Weight']} kg")
+                            with col3:
+                                if st.button("Edit", key=f"edit_weight_{entry_id_str}"):
+                                    st.session_state.editing_weight_id = entry_id_str
+                                    st.rerun()
+                            with col4:
+                                if st.button("Delete", key=f"delete_weight_{entry_id_str}"):
+                                    st.session_state.deleting_weight_id = entry_id_str
+                                    st.rerun()
+                    else:
+                        st.info(f"No weight entries recorded for {date_str}.")
+                else:
+                    st.info("No weight entries recorded yet for any date.") # Modified info message
+                
+                # Edit/delete forms will appear here based on session state (already implemented)
+                if 'editing_weight_id' in st.session_state and st.session_state.editing_weight_id:
+                    weight_to_edit_id_str = st.session_state.editing_weight_id
+                    db_conn = get_db_connection()
+                    if db_conn is not None:
+                        # Ensure the weight entry being edited is for the currently selected date_str
+                        # This check is important if the user changes selected_date while an edit form is open,
+                        # though st.rerun() on date change should ideally prevent stale forms.
+                        weight_to_edit = get_weight_by_id(db_conn, weight_to_edit_id_str)
+                        
+                        if weight_to_edit and weight_to_edit.get('Date') == date_str:
+                            st.subheader(f"Edit Weight Entry for {weight_to_edit.get('Date', 'N/A')}")
+                            with st.form(key="edit_weight_form"):
+                                edited_weight_val = st.number_input(
+                                    "Weight (kg):", 
+                                    value=float(weight_to_edit['Weight']), 
+                                    min_value=0.0, 
+                                    step=0.1,
+                                    key=f"edit_weight_val_{weight_to_edit_id_str}"
+                                )
+
+                                save_weight_changes = st.form_submit_button("Save Changes")
+                                cancel_edit_weight = st.form_submit_button("Cancel")
+
+                                if save_weight_changes:
+                                    try:
+                                        weights_collection = get_weights_collection(db_conn)
+                                        query_id = ObjectId(weight_to_edit_id_str)
+                                        
+                                        update_data = {"$set": {"Weight": edited_weight_val, "Date": date_str}} # Ensure date is saved/updated
+                                        result = weights_collection.update_one({"_id": query_id}, update_data)
+                                        
+                                        if result.modified_count > 0:
+                                            st.success("Weight entry updated successfully!")
+                                        else:
+                                            st.warning("No changes made or weight entry not found.")
+                                        st.session_state.editing_weight_id = None
+                                        st.rerun()
+                                    except Exception as e:
+                                        logger.error(f"Error updating weight entry: {e}")
+                                        st.error(f"Failed to update weight entry: {e}")
+                                
+                                if cancel_edit_weight:
+                                    st.session_state.editing_weight_id = None
+                                    st.rerun()
+                        elif weight_to_edit: # Entry found but not for current date_str
+                            st.warning(f"The weight entry you were editing was for {weight_to_edit.get('Date')}. Selected date is now {date_str}. Cancelling edit.")
+                            st.session_state.editing_weight_id = None
+                            st.rerun()
+                        else: # Entry not found
+                            st.error("Could not find the weight entry to edit.")
+                            st.session_state.editing_weight_id = None 
+                    else:
+                        st.error("Failed to connect to database for editing weight.")
+                        st.session_state.editing_weight_id = None
+
+                # --- Delete Weight Confirmation ---
+                if 'deleting_weight_id' in st.session_state and st.session_state.deleting_weight_id:
+                    weight_id_to_delete = st.session_state.deleting_weight_id
+                    # Optional: Fetch and display details of the weight entry being deleted for better UX
+                    # weight_to_delete_details = get_weight_by_id(get_db_connection(), weight_id_to_delete)
+                    # date_of_entry_to_delete = weight_to_delete_details.get('Date', 'this entry') if weight_to_delete_details else 'this entry'
+                    # st.warning(f"Are you sure you want to delete the weight entry for {date_of_entry_to_delete}? This action cannot be undone.")
+
+                    st.warning(f"Are you sure you want to delete this weight entry? This action cannot be undone.")
+                    
+                    col1_del, col2_del = st.columns(2) 
+                    with col1_del:
+                        if st.button("Confirm Delete Weight", key=f"confirm_delete_weight_{weight_id_to_delete}"):
+                            try:
+                                db_conn_del = get_db_connection() 
+                                if db_conn_del is not None:
+                                    weights_collection_del = get_weights_collection(db_conn_del) 
+                                    query_id_del = ObjectId(weight_id_to_delete) 
+                                    
+                                    # Ensure deleting for the correct date if strictness is needed, though _id is unique
+                                    # result_del = weights_collection_del.delete_one({"_id": query_id_del, "Date": date_str})
+                                    result_del = weights_collection_del.delete_one({"_id": query_id_del}) 
+                                    
+                                    if result_del.deleted_count > 0:
+                                        st.success("Weight entry deleted successfully!")
+                                    else:
+                                        st.warning("Weight entry not found or already deleted.")
+                                    st.session_state.deleting_weight_id = None
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to connect to the database for deletion.")
+                            except Exception as e_del: 
+                                logger.error(f"Error deleting weight entry: {e_del}")
+                                st.error(f"Failed to delete weight entry: {e_del}")
+                                
+                    with col2_del:
+                        if st.button("Cancel Delete Weight", key=f"cancel_delete_weight_{weight_id_to_delete}"):
+                            st.session_state.deleting_weight_id = None
+                            st.rerun()
             
             with tab3:
                 st.subheader("📸 Progress Pictures")
@@ -889,26 +1235,48 @@ def main_app():
                         st.subheader("🏆 Personal Records")
                         
                         if not workout_data.empty:
-                            # Get max weight for each exercise
-                            pr_data = workout_data.groupby('Exercise').agg({
-                                'Weight': 'max',
-                                'Reps': 'max',
-                                'Date': 'last'
-                            }).reset_index()
+                            # Ensure 'Weight' and 'Reps' are numeric
+                            workout_data['Weight'] = pd.to_numeric(workout_data['Weight'])
+                            workout_data['Reps'] = pd.to_numeric(workout_data['Reps'])
+
+                            # Sort by Weight and then Reps in descending order to easily pick the PR
+                            # For each exercise, the first row after sorting by Weight then Reps (desc) will be the PR
+                            pr_data_list = []
+                            for exercise, group in workout_data.groupby('Exercise'):
+                                # Find the max weight for the current exercise
+                                max_weight = group['Weight'].max()
+                                # Filter records with max weight
+                                max_weight_sets = group[group['Weight'] == max_weight]
+                                # Among those, find the record with max reps
+                                pr_set = max_weight_sets.sort_values(by='Reps', ascending=False).iloc[0]
+                                pr_data_list.append(pr_set)
                             
-                            pr_data.columns = ['Exercise', 'Max Weight (kg)', 'Max Reps', 'Last Performed']
-                            st.dataframe(pr_data, hide_index=True)
+                            if pr_data_list:
+                                pr_data = pd.DataFrame(pr_data_list)
+                                # Select and rename columns for display
+                                pr_data = pr_data[['Exercise', 'Weight', 'Reps', 'Date']]
+                                pr_data.columns = ['Exercise', 'Max Weight (kg)', 'Max Reps at Max Weight', 'Date of PR']
+                            else:
+                                pr_data = pd.DataFrame(columns=['Exercise', 'Max Weight (kg)', 'Max Reps at Max Weight', 'Date of PR'])
+                        else:
+                            pr_data = pd.DataFrame(columns=['Exercise', 'Max Weight (kg)', 'Max Reps at Max Weight', 'Date of PR'])
+
+                        st.dataframe(pr_data, hide_index=True)
                             
-                            # Show PR history for selected exercise
-                            st.subheader("PR Progress Chart")
-                            selected_exercise = st.selectbox(
-                                "Select Exercise",
-                                options=workout_data['Exercise'].unique()
-                            )
-                            
-                            exercise_progress = workout_data[workout_data['Exercise'] == selected_exercise]
+                        # Show PR history for selected exercise
+                        st.subheader("PR Progress Chart")
+                        selected_exercise = st.selectbox(
+                            "Select Exercise",
+                            options=workout_data['Exercise'].unique(),
+                            key="pr_progress_chart_selectbox" # Added a key for uniqueness
+                        )
+                        
+                        exercise_progress = workout_data[workout_data['Exercise'] == selected_exercise]
+                        if not exercise_progress.empty:
                             exercise_prs = exercise_progress.groupby('Date')['Weight'].max()
                             st.line_chart(exercise_prs)
+                        else:
+                            st.info(f"No data available for {selected_exercise} to show PR progress.")
                         else:
                             st.info("Log your workouts to track your personal records!")
                     
@@ -928,9 +1296,11 @@ def main_app():
                             with col2:
                                 st.subheader("Exercise Distribution")
                                 exercise_dist = workout_data['Exercise'].value_counts().head(10)
-                                st.dataframe(exercise_dist.reset_index(), 
-                                           columns=['Exercise', 'Times Performed'],
-                                           hide_index=True)
+                                df_display = exercise_dist.reset_index()
+                                # Assuming columns are 'Exercise' and 'count' after reset_index()
+                                # If Series name is different, this might need adjustment based on actual column names
+                                df_display.columns = ['Exercise', 'Times Performed'] 
+                                st.dataframe(df_display, hide_index=True)
                             
                             # Workout frequency calendar
                             st.subheader("Workout Calendar")
